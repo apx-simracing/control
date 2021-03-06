@@ -5,14 +5,13 @@ import Table from '@material-ui/core/Table';
 import TableBody from '@material-ui/core/TableBody';
 import TableCell from '@material-ui/core/TableCell';
 import TableContainer from '@material-ui/core/TableContainer';
-import TableHead from '@material-ui/core/TableHead';
 import TableRow from '@material-ui/core/TableRow';
 import Paper from '@material-ui/core/Paper';
 import './App.css';
-import { Grid, Chip, Typography, Badge, Avatar, AppBar, Toolbar, Button, FormControl, InputLabel, Select, MenuItem } from '@material-ui/core';
-import classes from '*.module.css';
+import { Grid, Chip, Typography, Avatar, AppBar, Toolbar, FormControl, InputLabel, Select, MenuItem } from '@material-ui/core';
+import PenaltyDialog from './PenaltyDialog';
 
-interface Status {
+export interface Status {
   build: number;
   name: string;
   track: string;
@@ -24,7 +23,7 @@ interface Status {
   session: string;
 }
 
-interface Vehicle {
+export interface Vehicle {
   position: number;
   carId: string;
   driverName: string;
@@ -42,6 +41,7 @@ interface Vehicle {
   pitting: boolean;
   lapsCompleted: number;
   pitLapDistance: number;
+  lapDistance: number;
 }
 
 interface VehicleVelocity {
@@ -55,29 +55,18 @@ interface VehicleVelocity {
 
 function App() {
   const [status, setStatus] = useState<Status | null>(null);
+  const [pendingPenaltyDriver, setPendingPenaltyDriver] = useState<string>("");
+  const [pendingPenalty, setPendingPenalty] = useState<number>(-999);
   const [polling, setPolling] = useState(false);
   const query = new URLSearchParams(window.location.search);
   const target = query.get('target')
   const secret = query.get('secret')
-  console.log(target, secret)
 
-  const getItems = function () {
-    setPolling(true);
-    fetch(target + "/status/" + secret)
-      .then(result => result.json() as unknown as Status)
-      .then(result => {
-        setPolling(false)
-        const raw = result;
-        raw.vehicles.sort((a, b) => a.position - b.position)
-
-        setStatus(result)
-      });
-  }
-  const addPenalty = function (driver: string, penalty: number) {
-    fetch(target + "/penalty/" + secret + "/" + driver + "/" + penalty)
+  const addPenalty = function (driver: string, penalty: number, reason: string) {
+    fetch(target + "/penalty/" + secret + "/" + driver + "/" + penalty + "/" + reason)
   }
   const teamName = (vehicle: Vehicle) => {
-    return vehicle.fullTeamName.replace("#" + vehicle.carNumber, "")
+    return vehicle.fullTeamName
   }
   const sectorNumber = (vehicle: Vehicle) => {
     return vehicle.sector.toLowerCase().replace("sector", "")
@@ -98,20 +87,47 @@ function App() {
     return ret;
   }
   const getLengthText = (status: Status) => {
-    const max = status.maxLaps == 2147483647 || status.session.indexOf("QUALIFY") != -1 ? secondToMinute(status.endEventTime) : status.maxLaps;
+    const max = status.maxLaps === 2147483647 || status.session.indexOf("QUALIFY") !== -1 ? secondToMinute(status.endEventTime) : status.maxLaps;
 
-    const current = status.maxLaps == 2147483647 || status.session.indexOf("QUALIFY") != -1 ? secondToMinute(status.currentEventTime) : Math.max.apply(Math, status.vehicles.map((v) => v.lapsCompleted))
+    const current = status.maxLaps === 2147483647 || status.session.indexOf("QUALIFY") !== -1 ? secondToMinute(status.currentEventTime) : Math.max.apply(Math, status.vehicles.map((v) => v.lapsCompleted))
 
     return current + "/" + max;
   }
   useEffect(() => {
+    const getItems = function () {
+      setPolling(true);
+      fetch(target + "/status/" + secret)
+        .then(result => {
+          setTimeout(() => null, 0);
+          return result.json() as unknown as Status
+        })
+        .then(result => {
+          setPolling(false)
+          const raw = result;
+          raw.vehicles.sort((a, b) => a.position - b.position)
+
+          setStatus(result)
+        });
+    }
     const interval = setInterval(() => {
-      if (!polling) {
+      if (!polling && !pendingPenaltyDriver) {
         getItems()
       }
     }, 500);
     return () => clearInterval(interval);
-  }, [polling]);
+  }, [polling, secret, target, pendingPenaltyDriver]);
+
+
+
+  const closePenalty = () => {
+    setPendingPenaltyDriver("");
+    setPendingPenalty(-999);
+  }
+  const confirmPenalty = (reason: string) => {
+    addPenalty(pendingPenaltyDriver, pendingPenalty, reason)
+    closePenalty()
+  }
+
   return (
     <>
       <AppBar position="relative">
@@ -136,6 +152,7 @@ function App() {
         </Container>}
         <Container component="main" maxWidth={false}>
           <CssBaseline />
+          {secret && target && pendingPenaltyDriver !== "" && <PenaltyDialog onClose={closePenalty} onConfirm={confirmPenalty} name={pendingPenaltyDriver} penalty={pendingPenalty} secret={secret} target={target} ></PenaltyDialog>}
           <TableContainer component={Paper}>
             <Table size="small" aria-label="a dense table">
               {status && <TableBody>
@@ -159,8 +176,9 @@ function App() {
                               labelId="penalty-selection-label"
                               className="penalty-selection"
                               onChange={(event: React.ChangeEvent<{ value: unknown }>) => {
-                                const penalty = event.target.value
-                                addPenalty(row.driverName, penalty as number)
+                                const penalty = event.target.value as number;
+                                setPendingPenalty(penalty)
+                                setPendingPenaltyDriver(row.driverName)
                               }}
                             >
                               <MenuItem value="1">DT</MenuItem>
@@ -193,8 +211,9 @@ function App() {
                               labelId="lap-selection-label"
                               className="lap-selection"
                               onChange={(event: React.ChangeEvent<{ value: unknown }>) => {
-                                const penalty = event.target.value
-                                addPenalty(row.driverName, penalty as number)
+                                const penalty = event.target.value as number
+                                setPendingPenalty(penalty)
+                                setPendingPenaltyDriver(row.driverName)
                               }}
                             >
                               {Array.from(Array(10), (e, i) => {
@@ -293,8 +312,8 @@ function App() {
                       {row.pitstops} stops
                     </TableCell>
                     <TableCell align="center">
-                      {row.pitLapDistance}m
-                </TableCell>
+                      {!row.pitting && !row.inGarageStall && <>{row.lapDistance}m</>}
+                    </TableCell>
                     <TableCell align="center">
                       {row.finishStatus === "FSTAT_DQ" && <>
                         <Grid item xs={1}></Grid>
