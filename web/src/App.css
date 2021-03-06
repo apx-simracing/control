@@ -1,3 +1,8 @@
+.length-conditions {
+  margin-bottom: 1em;
+  text-align: center;
+}
+
 .main-content {
   margin-top: 2em;
 }
@@ -10,6 +15,7 @@
   padding-top: 2em;
 }
 
-.penalty-selection {
-  width: 150px;
+.penalty-selection,
+.lap-selection {
+  width: 200px;
 }
